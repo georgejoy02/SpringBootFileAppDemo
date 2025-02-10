@@ -21,9 +21,8 @@ public class FileController {
 	@Autowired
 	private FileService fileService;
 
-	// Endpoint to upload a file.
 	@PostMapping("/upload")
-	public ResponseEntity<Map<String, Object>> uploadFile(@RequestParam("file") MultipartFile file) {
+	public ResponseEntity<Map<String, Object>> uploadFile(@RequestParam MultipartFile file) {
 		Map<String, Object> response = new HashMap<>();
 		try {
 			FileEntity fileEntity = fileService.saveFile(file);
@@ -32,14 +31,11 @@ public class FileController {
 			response.put("message", "File uploaded successfully");
 			return ResponseEntity.ok(response);
 		} catch (Exception e) {
-			response.put("id", null);
-			response.put("fileName", file.getOriginalFilename());
-			response.put("message", "Error uploading file: " + e.getMessage());
+			response.put("message", "Error uploading " + file.getOriginalFilename() + ": " + e.getMessage());
 			return ResponseEntity.badRequest().body(response);
 		}
 	}
 
-	// Endpoint to download a file by its ID.
 	@GetMapping("/download/{id}")
 	public ResponseEntity<?> downloadFile(@PathVariable Long id) {
 		FileEntity fileEntity = fileService.getFile(id);
@@ -51,7 +47,6 @@ public class FileController {
 		}
 	}
 
-	// Endpoint to search JSON files for a given value.
 	@PostMapping("/search")
 	public ResponseEntity<List<SearchResult>> searchJson(@RequestBody SearchRequest request) {
 		List<SearchResult> results = fileService.searchJsonFiles(request.getValue());

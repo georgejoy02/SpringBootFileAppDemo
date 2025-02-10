@@ -3,7 +3,8 @@ package com.tcs.demo.dto;
 public class SearchRequest {
     private String value;
 
-    public SearchRequest() {}
+    public SearchRequest() {
+    }
 
     public String getValue() {
         return value;
