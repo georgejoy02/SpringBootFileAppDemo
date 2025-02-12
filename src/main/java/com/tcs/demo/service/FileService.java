@@ -1,22 +1,27 @@
 package com.tcs.demo.service;
 
+import com.tcs.demo.dto.FileUploadResponse;
 import com.tcs.demo.dto.SearchResult;
 import com.tcs.demo.model.FileEntity;
 import com.tcs.demo.repository.FileRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 import java.util.Map;
+import java.util.Objects;
 
 @Service
 public class FileService {
@@ -27,35 +32,63 @@ public class FileService {
 	private FileRepository fileRepository;
 
 	public String removeComments(String content) {
-		String regexPattern = "((['\"])(?:(?!\\2|\\\\).|\\\\.)*\\2)|\\/\\/[^\\n]*|\\/\\*(?:[^*]|\\*(?!\\/))*\\*\\/";
+		String regexPattern = "((['\"])(?:(?!\\2|\\\\).|\\\\.)*\\2)" + "|\\/\\/[^\\n]*"
+				+ "|\\/\\*(?:[^*]|\\*(?!\\/))*\\*\\/";
+		
+		/** 
+		 * regex 
+		 * 
+		 * ((['"])(?:(?!\2|\\).|\\.)*\2)
+		 * |\/\/[^\n]*
+		 * |\/\*(?:[^*]|\*(?!\/))*\*\/ 
+		 * 
+		 */
+		
 		return content.replaceAll(regexPattern, "$1");
 	}
 
-	public FileEntity saveFile(MultipartFile file) throws Exception {
+	@Async
+	public CompletableFuture<FileUploadResponse> saveFile(MultipartFile file) throws Exception {
 
 		String originalContent = new String(file.getBytes());
 		String cleanedContent = removeComments(originalContent);
 
+		// logger.info("before json parsing of" + file.getOriginalFilename() +
+		// cleanedContent);
+
+		String originalFileName = file.getOriginalFilename();
+		String newFileName = originalFileName;
+
 		ObjectMapper mapper = new ObjectMapper();
-		String newFileName = file.getOriginalFilename();
+		mapper.configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true);
 
 		try {
-
 			JsonNode jsonNode = mapper.readTree(cleanedContent);
 
 			cleanedContent = mapper.writeValueAsString(jsonNode);
 
-			if (newFileName != null && newFileName.toLowerCase().endsWith(".txt")) {
-				newFileName = newFileName.substring(0, newFileName.lastIndexOf('.')) + ".json";
+			// logger.info("after json parsing of " + originalFileName + cleanedContent);
+
+			if (originalFileName != null && originalFileName.toLowerCase().endsWith(".txt")) {
+				newFileName = originalFileName.substring(0, originalFileName.lastIndexOf('.')) + ".json";
 			}
 		} catch (JsonProcessingException e) {
-			logger.error("An error occurred: ", e);
+			logger.warn(originalFileName+" content cant be parsed to json");
 		}
 
 		FileEntity fileEntity = new FileEntity();
 		fileEntity.setFileName(newFileName);
 		fileEntity.setContent(cleanedContent);
-		return fileRepository.save(fileEntity);
+
+		FileEntity savedEntity = fileRepository.save(fileEntity);
+
+		FileUploadResponse uploadResponse = new FileUploadResponse();
+		uploadResponse.setId(savedEntity.getId());
+		uploadResponse.setOriginalFileName(originalFileName);
+		uploadResponse.setChangedFileName(newFileName);
+
+		return CompletableFuture.completedFuture(uploadResponse);
+
 	}
 
 	public FileEntity getFile(Long id) {
@@ -91,22 +124,26 @@ public class FileService {
 	}
 
 	public List<SearchResult> searchJsonFiles(String searchValue) {
-		List<SearchResult> results = new ArrayList<>();
 		ObjectMapper mapper = new ObjectMapper();
 		List<FileEntity> allFiles = fileRepository.findAll();
 
-		allFiles.stream().filter(file -> file.getFileName() != null && file.getFileName().endsWith(".json"))
-				.forEach(file -> {
+		List<SearchResult> results = allFiles.parallelStream()
+				.filter(file -> file.getFileName() != null && file.getFileName().endsWith(".json"))
+				.map(file -> {
 					try {
 						Object json = mapper.readValue(file.getContent(), Object.class);
 						String foundKey = searchJsonForKey(json, searchValue);
 						if (foundKey != null) {
-							results.add(new SearchResult(file.getFileName(), foundKey));
+							return new SearchResult(file.getFileName(), foundKey);
 						}
 					} catch (Exception e) {
-						e.printStackTrace();
+						logger.error("An error occurred: ", e);
 					}
-				});
+					return null;
+				})
+				.filter(Objects::nonNull)
+				.collect(Collectors.toList());
+
 		return results;
 	}
 }
